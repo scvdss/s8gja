@@ -9,9 +9,11 @@ const PORT = process.env.PORT || 3000;
 // Message configuration
 const MESSAGE = "Gi ving steal a brainrot spawned brainrot serrvverr finder d(m) me f  aSRt";
 const CHANNELS = [
-    { id: "1399044319557582946", interval: 34000 }, // 34 seconds
-    { id: "1404787770198855765", interval: 330000 }, // 5.5 minutes = 330 seconds
-    { id: "1404787780986343485", interval: 90000 } // 1.5 minutes = 90 seconds
+    { id: "1404787770198855765", interval: 330000 },    // 5:30 mins = 330 seconds
+    { id: "1404787780986343485", interval: 90000 },     // 1:30 mins = 90 seconds
+    { id: "1396097266489491486", interval: 30000 },     // 30 seconds
+    { id: "1396097530437042247", interval: 90000 },     // 1:30 mins = 90 seconds
+    { id: "1374277094330335248", interval: 50000 }      // 50 seconds
 ];
 
 // Track active clients and intervals
@@ -88,11 +90,23 @@ app.get('/', (req, res) => {
         message: MESSAGE,
         intervals: CHANNELS.map(ch => ({
             channel: ch.id,
-            interval: `${ch.interval/1000} seconds`
+            interval: `${ch.interval/1000} seconds`,
+            formatted: formatInterval(ch.interval)
         })),
         uptime: process.uptime()
     });
 });
+
+// Helper function to format interval time
+function formatInterval(ms) {
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    
+    if (minutes > 0) {
+        return `${minutes}:${seconds.toString().padStart(2, '0')} minutes`;
+    }
+    return `${seconds} seconds`;
+}
 
 // Status endpoint
 app.get('/status', (req, res) => {
@@ -130,6 +144,11 @@ process.on('SIGTERM', () => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📝 Message: "${MESSAGE}"`);
-    console.log(`📊 Sending to ${CHANNELS.length} channels`);
+    console.log(`📊 Sending to ${CHANNELS.length} channels:`);
+    
+    CHANNELS.forEach(channel => {
+        console.log(`   • ${channel.id} - every ${formatInterval(channel.interval)}`);
+    });
+    
     console.log(`🔗 Health check: http://localhost:${PORT}`);
 });
