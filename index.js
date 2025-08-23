@@ -6,149 +6,75 @@ const config = require('./config.json');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Message configuration
-const MESSAGE = "Gi ving steal a brainrot spawned brainrot serrvverr finder d(m) me f  aSRt";
-const CHANNELS = [
-    { id: "1404787770198855765", interval: 330000 },    // 5:30 mins = 330 seconds
-    { id: "1404787780986343485", interval: 90000 },     // 1:30 mins = 90 seconds
-    { id: "1396097266489491486", interval: 30000 },     // 30 seconds
-    { id: "1396097530437042247", interval: 90000 },     // 1:30 mins = 90 seconds
-    { id: "1374277094330335248", interval: 50000 }      // 50 seconds
-];
-
-// Track active clients and intervals
+// Keep track of active clients to prevent memory leaks
 const activeClients = new Set();
-const intervals = new Map();
 
-async function sendMessageToChannel(account, channelId, message) {
-    const client = new Client();
+async function bumpWithAccount(account) {
+  const client = new Client();
 
-    return new Promise((resolve) => {
-        activeClients.add(client);
+  return new Promise((resolve) => {
+    activeClients.add(client);
 
-        client.on('ready', async () => {
-            console.log(`Logged in as ${client.user.tag} for channel ${channelId}`);
+    client.on('ready', async () => {
+      console.log(`Logged in as ${client.user.tag} using token: ${account.token.slice(0, 10)}...`);
 
-            try {
-                const channel = await client.channels.fetch(channelId);
-                await channel.send(message);
-                console.log(`Message sent successfully to channel ${channelId} by ${client.user.tag}`);
-            } catch (error) {
-                console.error(`Failed to send message to channel ${channelId}:`, error.message);
-            } finally {
-                client.destroy();
-                activeClients.delete(client);
-                resolve();
-            }
-        });
-
-        client.login(account.token).catch((err) => {
-            console.error(`Failed to login for channel ${channelId}:`, err.message);
-            activeClients.delete(client);
-            resolve();
-        });
+      try {
+        const channel = await client.channels.fetch(account.channelId);
+        await channel.sendSlash('302050872383242240', 'bump');
+        console.log(`Bump command sent successfully by ${client.user.tag}`);
+      } catch (error) {
+        console.error(`Failed to send bump command for token ${account.token.slice(0, 10)}:`, error.message);
+      } finally {
+        client.destroy();
+        activeClients.delete(client);
+        resolve();
+      }
     });
+
+    client.login(account.token).catch((err) => {
+      console.error(`Failed to login for token ${account.token.slice(0, 10)}:`, err.message);
+      activeClients.delete(client);
+      resolve();
+    });
+  });
 }
 
-function startMessageScheduler(account) {
-    console.log(`Starting message scheduler for account: ${account.token.slice(0, 10)}...`);
-    
-    CHANNELS.forEach((channelConfig, index) => {
-        const intervalId = setInterval(async () => {
-            console.log(`Sending message to channel ${channelConfig.id} (every ${channelConfig.interval/1000}s)...`);
-            await sendMessageToChannel(account, channelConfig.id, MESSAGE);
-        }, channelConfig.interval);
+async function runBumpCycle() {
+  while (true) {
+    for (const account of config.accounts) {
+      console.log(`Processing bump for token: ${account.token.slice(0, 10)}...`);
+      await bumpWithAccount(account);
+      console.log(`Waiting 5 seconds before the next bump...`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+    }
 
-        intervals.set(`account-${index}-channel-${channelConfig.id}`, intervalId);
-        console.log(`Scheduled messages for channel ${channelConfig.id} every ${channelConfig.interval/1000} seconds`);
-    });
+    console.log(`All accounts have sent the bump. Waiting 2 hours and 15 minutes before restarting...`);
+    await new Promise((resolve) => setTimeout(resolve, 8100000));
+  }
 }
 
-function stopAllIntervals() {
-    intervals.forEach((intervalId, key) => {
-        clearInterval(intervalId);
-        console.log(`Stopped interval: ${key}`);
-    });
-    intervals.clear();
-}
-
-// Start the message scheduler for all accounts
-config.accounts.forEach((account, index) => {
-    console.log(`Initializing account ${index + 1}/${config.accounts.length}`);
-    setTimeout(() => {
-        startMessageScheduler(account);
-    }, index * 5000); // Stagger startup by 5 seconds per account
-});
+// Start the bump loop
+runBumpCycle().catch(console.error);
 
 // Health check endpoint
 app.get('/', (req, res) => {
-    res.json({
-        status: 'online',
-        service: 'Discord Message Sender',
-        accounts: config.accounts.length,
-        channels: CHANNELS.length,
-        message: MESSAGE,
-        intervals: CHANNELS.map(ch => ({
-            channel: ch.id,
-            interval: `${ch.interval/1000} seconds`,
-            formatted: formatInterval(ch.interval)
-        })),
-        uptime: process.uptime()
-    });
+  res.status(200).json({
+    status: 'running',
+    message: 'Autobumpr service is running',
+    accounts: config.accounts.map(a => ({
+      token: `${a.token.slice(0, 5)}...${a.token.slice(-5)}`,
+      channelId: a.channelId
+    }))
+  });
 });
 
-// Helper function to format interval time
-function formatInterval(ms) {
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
-    
-    if (minutes > 0) {
-        return `${minutes}:${seconds.toString().padStart(2, '0')} minutes`;
-    }
-    return `${seconds} seconds`;
-}
-
-// Status endpoint
-app.get('/status', (req, res) => {
-    res.json({
-        active: true,
-        activeClients: activeClients.size,
-        activeIntervals: intervals.size,
-        message: 'Message scheduler is running'
-    });
-});
-
-// Stop all intervals endpoint (for maintenance)
-app.get('/stop', (req, res) => {
-    stopAllIntervals();
-    res.json({ message: 'All message intervals stopped' });
-});
-
-// Start all intervals endpoint
-app.get('/start', (req, res) => {
-    config.accounts.forEach((account, index) => {
-        startMessageScheduler(account);
-    });
-    res.json({ message: 'Message intervals started' });
-});
-
-// Handle graceful shutdown
+// Handle shutdown gracefully
 process.on('SIGTERM', () => {
-    console.log('Received SIGTERM, shutting down gracefully...');
-    stopAllIntervals();
-    activeClients.forEach(client => client.destroy());
-    setTimeout(() => process.exit(0), 3000);
+  console.log('SIGTERM received. Shutting down gracefully...');
+  activeClients.forEach(client => client.destroy());
+  setTimeout(() => process.exit(0), 5000);
 });
 
-// Start server
 app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📝 Message: "${MESSAGE}"`);
-    console.log(`📊 Sending to ${CHANNELS.length} channels:`);
-    
-    CHANNELS.forEach(channel => {
-        console.log(`   • ${channel.id} - every ${formatInterval(channel.interval)}`);
-    });
-    
-    console.log(`🔗 Health check: http://localhost:${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
