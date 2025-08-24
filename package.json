@@ -1,11 +1,11 @@
 {
-  "name": "autobumpr-web",
-  "version": "1.0.0",
-  "description": "Discord bump bot as a web service",
+  "name": "autobumpr-fixed",
+  "version": "2.0.0",
+  "description": "Fixed Discord bump bot with better error handling",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node index.js"
   },
   "dependencies": {
     "discord.js-selfbot-v13": "^3.4.5",
