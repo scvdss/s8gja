@@ -88,58 +88,97 @@ async function bumpWithAccount(account) {
     });
 }
 
-// Function to send countdown messages
+// FIXED: Function to send countdown messages from YOUR account
 async function sendCountdownMessage(account) {
-    const client = new Client({
-        checkUpdate: false,
-        ws: { properties: { $browser: "Discord iOS" } }
-    });
+    console.log(`📢 Preparing to send countdown message from ${account.token.slice(0, 10)}...`);
+    
+    return new Promise(async (resolve) => {
+        const client = new Client({
+            checkUpdate: false,
+            ws: { properties: { $browser: "Discord iOS" } }
+        });
 
-    try {
-        await client.login(account.token);
-        
+        // Set timeout for countdown message
+        const timeout = setTimeout(() => {
+            console.log(`❌ Countdown message timeout for account ${account.token.slice(0, 10)}`);
+            client.destroy().catch(() => {});
+            resolve();
+        }, 15000);
+
         client.on('ready', async () => {
+            clearTimeout(timeout);
+            console.log(`✅ Countdown client ready for ${client.user.tag}`);
+            
             try {
+                // Send to the SAME channel as bumping
                 const channel = await client.channels.fetch(account.channelId);
                 
                 if (nextBumpTime) {
                     const now = new Date();
                     const timeLeft = nextBumpTime - now;
-                    const minutesLeft = Math.floor(timeLeft / 60000);
-                    const hoursLeft = Math.floor(minutesLeft / 60);
-                    const remainingMinutes = minutesLeft % 60;
                     
-                    let message;
-                    if (hoursLeft > 0) {
-                        message = `⏰ Next bump in **${hoursLeft}h ${remainingMinutes}m** - ${nextBumpTime.toLocaleTimeString()}`;
+                    if (timeLeft > 0) {
+                        const minutesLeft = Math.floor(timeLeft / 60000);
+                        const hoursLeft = Math.floor(minutesLeft / 60);
+                        const remainingMinutes = minutesLeft % 60;
+                        
+                        let message;
+                        if (hoursLeft > 0) {
+                            message = `⏰ Next bump in **${hoursLeft}h ${remainingMinutes}m** - ${nextBumpTime.toLocaleTimeString()}`;
+                        } else if (minutesLeft > 0) {
+                            message = `⏰ Next bump in **${minutesLeft}m** - ${nextBumpTime.toLocaleTimeString()}`;
+                        } else {
+                            message = `⏰ Bump time! Starting soon...`;
+                        }
+                        
+                        // Send regular message (not slash command) from YOUR account
+                        await channel.send(message);
+                        console.log(`✅ Countdown sent from ${client.user.tag}: ${message}`);
                     } else {
-                        message = `⏰ Next bump in **${minutesLeft}m** - ${nextBumpTime.toLocaleTimeString()}`;
+                        // Send regular message when it's bump time
+                        await channel.send("⏰ Bump time! Starting bump cycle soon...");
+                        console.log(`✅ Bump time alert sent from ${client.user.tag}`);
                     }
-                    
-                    await channel.send(message);
-                    console.log(`📢 Countdown sent: ${message}`);
                 } else {
+                    // Send regular message when no bump time is set yet
                     await channel.send("⏰ Bump timer starting... next bump time will be announced soon!");
-                    console.log(`📢 Initial countdown message sent`);
+                    console.log(`✅ Initial countdown message sent from ${client.user.tag}`);
                 }
                 
             } catch (error) {
-                console.error(`❌ Countdown message failed:`, error.message);
+                console.error(`❌ Countdown message failed from ${account.token.slice(0, 10)}:`, error.message);
             } finally {
-                client.destroy();
+                // Destroy client after sending message
+                setTimeout(() => {
+                    client.destroy().catch(() => {});
+                    resolve();
+                }, 1000);
             }
         });
-        
-    } catch (error) {
-        console.error(`❌ Countdown login failed:`, error.message);
-    }
+
+        client.on('error', (error) => {
+            clearTimeout(timeout);
+            console.error(`❌ Countdown client error:`, error.message);
+            client.destroy().catch(() => {});
+            resolve();
+        });
+
+        // Login to send countdown
+        try {
+            await client.login(account.token);
+        } catch (error) {
+            clearTimeout(timeout);
+            console.error(`❌ Countdown login failed:`, error.message);
+            resolve();
+        }
+    });
 }
 
 // Start countdown messages for an account
 function startCountdownForAccount(account) {
-    console.log(`🔄 Starting countdown messages for account...`);
+    console.log(`🔄 Starting countdown messages for account ${account.token.slice(0, 10)}...`);
     
-    // Send initial message
+    // Send initial message immediately
     sendCountdownMessage(account);
     
     // Set up interval for countdown messages (every 1 minute)
@@ -156,7 +195,7 @@ function stopCountdownForAccount(account) {
     if (intervalId) {
         clearInterval(intervalId);
         countdownIntervals.delete(account.token);
-        console.log(`🛑 Stopped countdown messages for account`);
+        console.log(`🛑 Stopped countdown messages for account ${account.token.slice(0, 10)}`);
     }
 }
 
@@ -320,6 +359,7 @@ app.listen(PORT, () => {
     console.log(`🔧 Controls: /start, /stop, /restart`);
     console.log(`👥 Accounts: ${config.accounts.length}`);
     console.log(`⏰ Countdown messages: EVERY 1 MINUTE`);
+    console.log(`💬 Messages will be sent from YOUR account in the SAME channel`);
     
     // Start bump scheduler
     startBumpScheduler().catch(console.error);
