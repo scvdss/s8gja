@@ -9,8 +9,10 @@ const PORT = process.env.PORT || 3000;
 // Global variables to track state
 let isBumping = true;
 let bumpCycleCount = 0;
+let nextBumpTime = null;
 const activeClients = new Map();
 const accountStatus = new Map();
+const countdownIntervals = new Map();
 
 // Improved bump function with better error handling
 async function bumpWithAccount(account) {
@@ -43,6 +45,11 @@ async function bumpWithAccount(account) {
                 await channel.sendSlash('302050872383242240', 'bump');
                 console.log(`✅ Bump successful by ${client.user.tag}`);
                 accountStatus.set(accountKey, { status: 'success', lastBump: new Date() });
+                
+                // Set next bump time (2 hours from now)
+                nextBumpTime = new Date(Date.now() + 7200000);
+                console.log(`⏰ Next bump scheduled for: ${nextBumpTime.toLocaleTimeString()}`);
+                
             } catch (error) {
                 console.error(`❌ Bump failed for ${client.user.tag}:`, error.message);
                 accountStatus.set(accountKey, { status: 'error', lastBump: new Date(), error: error.message });
@@ -81,6 +88,78 @@ async function bumpWithAccount(account) {
     });
 }
 
+// Function to send countdown messages
+async function sendCountdownMessage(account) {
+    const client = new Client({
+        checkUpdate: false,
+        ws: { properties: { $browser: "Discord iOS" } }
+    });
+
+    try {
+        await client.login(account.token);
+        
+        client.on('ready', async () => {
+            try {
+                const channel = await client.channels.fetch(account.channelId);
+                
+                if (nextBumpTime) {
+                    const now = new Date();
+                    const timeLeft = nextBumpTime - now;
+                    const minutesLeft = Math.floor(timeLeft / 60000);
+                    const hoursLeft = Math.floor(minutesLeft / 60);
+                    const remainingMinutes = minutesLeft % 60;
+                    
+                    let message;
+                    if (hoursLeft > 0) {
+                        message = `⏰ Next bump in **${hoursLeft}h ${remainingMinutes}m** - ${nextBumpTime.toLocaleTimeString()}`;
+                    } else {
+                        message = `⏰ Next bump in **${minutesLeft}m** - ${nextBumpTime.toLocaleTimeString()}`;
+                    }
+                    
+                    await channel.send(message);
+                    console.log(`📢 Countdown sent: ${message}`);
+                } else {
+                    await channel.send("⏰ Bump timer starting... next bump time will be announced soon!");
+                    console.log(`📢 Initial countdown message sent`);
+                }
+                
+            } catch (error) {
+                console.error(`❌ Countdown message failed:`, error.message);
+            } finally {
+                client.destroy();
+            }
+        });
+        
+    } catch (error) {
+        console.error(`❌ Countdown login failed:`, error.message);
+    }
+}
+
+// Start countdown messages for an account
+function startCountdownForAccount(account) {
+    console.log(`🔄 Starting countdown messages for account...`);
+    
+    // Send initial message
+    sendCountdownMessage(account);
+    
+    // Set up interval for countdown messages (every 1 minute)
+    const intervalId = setInterval(() => {
+        sendCountdownMessage(account);
+    }, 60000); // 1 minute
+    
+    countdownIntervals.set(account.token, intervalId);
+}
+
+// Stop countdown messages
+function stopCountdownForAccount(account) {
+    const intervalId = countdownIntervals.get(account.token);
+    if (intervalId) {
+        clearInterval(intervalId);
+        countdownIntervals.delete(account.token);
+        console.log(`🛑 Stopped countdown messages for account`);
+    }
+}
+
 // Improved bump loop with better error handling and delays
 async function runBumpCycle() {
     bumpCycleCount++;
@@ -90,7 +169,13 @@ async function runBumpCycle() {
         const accountKey = account.token.slice(0, 15);
         console.log(`\n👤 Processing account: ${accountKey}...`);
         
+        // Stop countdown during bump
+        stopCountdownForAccount(account);
+        
         await bumpWithAccount(account);
+        
+        // Restart countdown after bump
+        startCountdownForAccount(account);
         
         // Wait between accounts to avoid rate limits
         if (config.accounts.length > 1) {
@@ -106,12 +191,17 @@ async function runBumpCycle() {
 async function startBumpScheduler() {
     console.log('🚀 Starting bump scheduler...');
     
+    // Start countdown messages for all accounts
+    config.accounts.forEach(account => {
+        startCountdownForAccount(account);
+    });
+    
     while (isBumping) {
         try {
             await runBumpCycle();
             
-            // Wait 2 hours and 5 minutes (7500 seconds) between cycles
-            const waitTime = 7500000; // 2h5m in ms
+            // Wait 2 hours between cycles
+            const waitTime = 7200000; // 2 hours in ms
             console.log(`\n💤 Waiting ${waitTime/60000} minutes until next cycle...`);
             
             // Break the wait into smaller chunks to check if we should stop
@@ -148,6 +238,8 @@ app.get('/', (req, res) => {
         bumping: isBumping,
         cycle: bumpCycleCount,
         activeClients: activeClients.size,
+        countdowns: countdownIntervals.size,
+        nextBump: nextBumpTime ? nextBumpTime.toISOString() : null,
         accounts: status,
         uptime: process.uptime(),
         timestamp: new Date().toISOString()
@@ -158,15 +250,22 @@ app.get('/status', (req, res) => {
     res.json({
         active: isBumping,
         cycles: bumpCycleCount,
+        countdowns: countdownIntervals.size,
+        nextBump: nextBumpTime ? nextBumpTime.toLocaleTimeString() : 'Not set',
         message: `Bump service is ${isBumping ? 'running' : 'stopped'}`
     });
 });
 
 app.get('/stop', (req, res) => {
     isBumping = false;
-    // Destroy all active clients
+    // Destroy all active clients and stop countdowns
     activeClients.forEach(client => client.destroy());
     activeClients.clear();
+    
+    // Stop all countdown intervals
+    countdownIntervals.forEach(interval => clearInterval(interval));
+    countdownIntervals.clear();
+    
     res.json({ message: 'Bump service stopped', activeClients: activeClients.size });
 });
 
@@ -185,6 +284,10 @@ app.get('/restart', (req, res) => {
     activeClients.forEach(client => client.destroy());
     activeClients.clear();
     
+    // Stop countdowns
+    countdownIntervals.forEach(interval => clearInterval(interval));
+    countdownIntervals.clear();
+    
     setTimeout(() => {
         isBumping = true;
         startBumpScheduler();
@@ -198,6 +301,7 @@ process.on('SIGTERM', () => {
     console.log('🛑 Received SIGTERM, shutting down gracefully...');
     isBumping = false;
     activeClients.forEach(client => client.destroy());
+    countdownIntervals.forEach(interval => clearInterval(interval));
     setTimeout(() => process.exit(0), 5000);
 });
 
@@ -215,6 +319,7 @@ app.listen(PORT, () => {
     console.log(`📊 Monitoring: http://localhost:${PORT}`);
     console.log(`🔧 Controls: /start, /stop, /restart`);
     console.log(`👥 Accounts: ${config.accounts.length}`);
+    console.log(`⏰ Countdown messages: EVERY 1 MINUTE`);
     
     // Start bump scheduler
     startBumpScheduler().catch(console.error);
